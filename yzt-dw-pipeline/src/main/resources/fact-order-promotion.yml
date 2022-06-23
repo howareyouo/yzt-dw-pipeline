@@ -1,0 +1,20 @@
+#满减商品pvuv
+FactOrderPromotionDimQuery: |
+  SELECT
+    ofrp.id as promotionId,
+    ofrp.shop_id as shopId,
+    ofrp.product_rule as productRule,
+    ofrp.start_time as startTime,
+    ofrp.end_time as endTime,
+    ofrp.state as state,
+    ofrp.is_long_term as longTerm
+  FROM
+    odsLogStream ols
+  LEFT JOIN  ods_full_reduce_promotion
+  FOR SYSTEM_TIME AS OF ols.proctime AS ofrp ON ofrp.shop_id = ols.shopId
+  WHERE (ofrp.state = 1
+  AND ofrp.is_long_term = 0
+  AND ols.eventTime >= ofrp.start_time
+  AND ols.eventTime <= ofrp.end_time)
+  OR (ofrp.state = 1
+  AND ofrp.is_long_term = 1)

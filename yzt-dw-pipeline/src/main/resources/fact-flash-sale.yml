@@ -1,0 +1,42 @@
+#筛选出满减下的商品
+flashSaleActivityProductDimQuery: |
+  SELECT orderId,
+         mainShopId,
+         shopId,
+         unionNo,
+         orderNo,
+         transactionNo,
+         paymentMethod,
+         source,
+         status,
+         orderType,
+         productAmount,
+         shipCostAmount,
+         shipCostReduced,
+         discountAmount,
+         totalAmount,
+         actualAmount,
+         memberId,
+         shipMethod,
+         closedAt,
+         receivedAt,
+         paidAt,
+         createdAt,
+         updatedAt,
+         promotionType,
+         promotionId,
+         promotionDiscountAmount,
+         productId,
+         skuId,
+         quantity,
+         retailPrice,
+         isGiveaway,
+         productDiscountAmount,
+         name,
+         showVoucher,
+         productType,
+         productActualAmount
+  FROM factOrderPromotionItem AS o
+  INNER JOIN flashsale_activity_product
+  FOR SYSTEM_TIME AS OF o.proctime AS ods_flash ON o.productId = ods_flash.product_id and o.promotionId = ods_flash.activity_id
+  WHERE o.promotionType = 3

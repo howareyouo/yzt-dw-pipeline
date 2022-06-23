@@ -1,0 +1,159 @@
+odsLogStreamQuery: |
+  SELECT
+        r.shopId,
+        r.mainShopId,
+        CASE
+            WHEN r.taroEnv = 'weapp' then 'wxapp'
+            WHEN r.taroEnv = 'h5' then 'web'
+            ELSE 'unknown'
+        END  AS taroEnv,
+        r.deviceId,
+        r.deviceModel,
+        r.deviceBrand,
+        r.systemName,
+        r.systemVersion,
+        r.appVersion,
+        r.eventName,
+        udf_to_timestamp(r.eventTime) as eventTime,
+        r.openId,
+        r.userId,
+        r.url,
+        r.keyword,
+        r.query,
+        r.quantity,
+        r.goodsId,
+        CASE
+            WHEN r.couponTemplateId > 0 THEN 1
+            WHEN r.activityType = 'flashSale' THEN 3
+            WHEN r.activityType = 'fullReduce' THEN 2
+            WHEN r.activityType = 'liveRoom' THEN 4
+            ELSE 0
+        END AS promotionType,
+        CASE
+            WHEN r.couponTemplateId > 0 THEN r.couponTemplateId
+            ELSE r.activityId
+        END AS promotionId,
+        r.source AS source,
+        r.goodsName AS goodsName,
+        r.liveRoomId AS liveRoomId,
+        r.userName AS userName,
+        r.userPhone AS userPhone,
+        '' AS couponName,
+        r.uuid,
+        r.beginTime as beginTime,
+        r.endTime as endTime,
+        r.productType as productType
+    FROM
+        rawLogStream as r
+    WHERE r.eventName <> 'ViewShopHeartBeat'
+
+# ods_log_stream维表关联
+odsLogStreamDimQuery: |
+  SELECT
+        l.shopId,
+        l.mainShopId,
+        l.taroEnv,
+        l.deviceId,
+        l.deviceModel,
+        l.deviceBrand,
+        l.systemName,
+        l.systemVersion,
+        l.appVersion,
+        l.eventName,
+        l.eventTime,
+        l.openId,
+        l.userId,
+        l.url,
+        l.keyword,
+        l.query,
+        l.quantity,
+        l.goodsId,
+        l.promotionType,
+        l.promotionId,
+        l.source,
+        l.goodsName,
+        l.liveRoomId,
+        l.userName,
+        l.userPhone,
+        t1.coupon_name as  couponName,
+        l.uuid,
+        l.beginTime,
+        l.endTime,
+        l.productType,
+        l.couponTemplateId,
+        l.avatar,
+        l.couponType
+    FROM
+        odsLogStream as l
+    left join ods_coupon_template FOR SYSTEM_TIME AS OF l.proctime AS t1 on l.couponTemplateId = t1.id
+
+#1、product_type为1（实体商品），首次首次付款后status = 1（待发货）
+#2、product_type为2（虚拟商品），当不需要展示电子凭证（show_voucher = false），首次付款后status = 3（订单已完成/待评价），
+#   当需要展示电子凭证（show_voucher = true），首次付款后status = 2 （待收货）
+#3、product_type为3（电子卡券），首次付款后status = 2（待收货）
+factMemberOrderClean: |
+  SELECT DISTINCT eo.id,
+                  shopId,
+                  orderNo,
+                  `source`,
+                  eo.actualAmount,
+                  memberId,
+                  updatedAt,
+                  eo.proctime
+  FROM odsEmallOrder eo,
+       odsOrderItem oi
+  WHERE eo.id = oi.orderId
+    AND `deleted` = 0
+    AND remindShipCount = 0
+    AND receivedAt IS NULL
+    AND ((oi.productType = 3
+            AND eo.status = 2)
+         OR (oi.productType = 2
+            AND oi.showVoucher = FALSE
+            AND eo.status = 3)
+         OR (oi.productType = 2
+            AND oi.showVoucher = TRUE
+            AND eo.status = 2)
+         OR (oi.productType = 1
+             AND eo.status = 1))
+
+
+orderPromotionQuery: |
+  SELECT t1.shopId,
+         t1.source,
+         t1.memberId,
+         t2.promotionType,
+         t2.promotionId,
+         t1.order_count,
+         t2.promotion_count,
+         t1.original_order_time,
+         t2.original_order_promotion_time,
+         t1.totalAmount
+  FROM
+    ( SELECT shopId,
+             memberId,
+             source,
+             count(*) AS order_count,
+             sum(actualAmount) as totalAmount,
+             min(updatedAt) AS original_order_time
+     FROM emall_order_pay
+     GROUP BY shopId,
+              memberId,
+              source) t1
+  LEFT JOIN
+    ( SELECT shopId,
+             memberId,
+             source,
+             promotionId,
+             promotionType,
+             count(*) AS promotion_count,
+             min(updatedAt) AS original_order_promotion_time
+     FROM emall_order_pay eo
+     INNER JOIN odsOrderPromotion op ON eo.id = op.orderId
+     GROUP BY shopId,
+              memberId,
+              source,
+              promotionId,
+              promotionType) t2 ON t1.shopId = t2.shopId
+  AND t1.memberId = t2.memberId
+  AND t1.source = t2.source

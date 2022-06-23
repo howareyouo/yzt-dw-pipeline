@@ -1,0 +1,567 @@
+OrderClean: |
+  SELECT eo.id,
+         shopId,
+         orderNo,
+         `source`,
+         eo.actualAmount,
+         totalAmount,
+         memberId,
+         updatedAt,
+         eo.proctime,
+         CASE
+             WHEN oi.productType = 3
+                  AND eo.status = 2 THEN 1
+             WHEN oi.productType = 2
+                  AND oi.showVoucher = FALSE
+                  AND eo.status = 3 THEN 1
+             WHEN oi.productType = 2
+                  AND oi.showVoucher = TRUE
+                  AND eo.status = 2 THEN 1
+             WHEN oi.productType = 1
+                  AND eo.status = 1 THEN 1
+             WHEN status = 0 THEN 0
+             ELSE NULL
+         END AS status
+  FROM odsEmallOrder eo,
+       odsOrderItem oi
+  WHERE eo.id = oi.orderId
+    AND `deleted` = 0
+    AND remindShipCount = 0
+    AND receivedAt IS NULL
+
+
+#计算店铺pv、uv
+factShopDailyPvAndUv: |
+  SELECT
+       DATE_FORMAT(eventTime,'yyyy-MM-dd') as rowDate,
+       shopId,
+       taroEnv  AS channel,
+       count(*) AS pv,
+       count(DISTINCT deviceId) AS uv
+  FROM odsLogStream
+  WHERE eventName ='ViewShop' AND shopId >0
+  GROUP BY DATE_FORMAT(eventTime,'yyyy-MM-dd'),shopId,taroEnv
+
+#计算店铺下浏览商品数据
+factShopDailyPvAndUvProduct: |
+  SELECT
+       DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd') as rowDate,
+       shopId,
+       taroEnv  AS channel,
+       count(*)
+       OVER (
+       PARTITION BY shopId,taroEnv,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+       ORDER BY proctime
+       RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS pv_product,
+       count(DISTINCT deviceId)
+       OVER (
+       PARTITION BY shopId,taroEnv,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+       ORDER BY proctime
+       RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS uv_product
+  FROM odsLogStream
+  WHERE eventName ='ViewGoods' or eventName = 'ViewGoodsByActivity' AND shopId >0
+
+#计算店铺分享
+factShopDailyShare: |
+  SELECT
+        DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd') as rowDate,
+        shopId,
+        taroEnv  AS channel,
+        count(*)
+        OVER (
+        PARTITION BY shopId,taroEnv,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+        ORDER BY proctime
+        RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS shareCount,
+        count(DISTINCT userId)
+        OVER (
+        PARTITION BY shopId,taroEnv,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+        ORDER BY proctime
+        RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS sharenNumber
+  FROM odsLogStream
+  WHERE eventName ='ShareShop' AND shopId >0
+
+#计算店铺加购
+factShopDailyAddCart: |
+  SELECT
+        DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd') as rowDate,
+        shopId,
+        taroEnv  AS channel,
+        count(*)
+        OVER (
+        PARTITION BY shopId,taroEnv,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+        ORDER BY proctime
+        RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS addcartCount,
+        count(DISTINCT deviceId)
+        OVER (
+        PARTITION BY shopId,taroEnv,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+        ORDER BY proctime
+        RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS addcartNumber
+  FROM odsLogStream
+  WHERE eventName ='AddToShoppingCart' OR eventName = 'AddToShoppingCartByActivity' AND shopId >0
+
+#计算店铺下单数据
+factShopDailyOrder: |
+  SELECT
+        DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd') as rowDate,
+        shopId,
+        CASE
+           WHEN `source` = 'web'
+           OR `source` = 'wxweb' THEN 'web'
+           ELSE `source`
+        END AS channel,
+        count(DISTINCT orderNo)
+        OVER (
+        PARTITION BY shopId,`source`,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+        ORDER BY proctime
+        RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS orderCount,
+        count(DISTINCT memberId)
+        OVER (
+        PARTITION BY shopId,`source`,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+        ORDER BY proctime
+        RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS orderNumber,
+        sum(totalAmount)
+        OVER (
+        PARTITION BY shopId,`source`,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+        ORDER BY proctime
+        RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS orderAmount
+  FROM emall_order_pay
+  WHERE status= 0
+
+#计算店铺付款数据
+factShopDailyPay: |
+  SELECT
+       DATE_FORMAT(TIMESTAMPADD(HOUR,8,eo.proctime),'yyyy-MM-dd') as rowDate,
+       shopId,
+       CASE
+           WHEN `source` = 'web'
+           OR `source` = 'wxweb' THEN 'web'
+           ELSE `source`
+       END AS channel,
+       count(DISTINCT orderNo)
+       OVER (
+       PARTITION BY shopId,`source`,DATE_FORMAT(TIMESTAMPADD(HOUR,8,eo.proctime),'yyyy-MM-dd')
+       ORDER BY eo.proctime
+       RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS payCount,
+       count(DISTINCT memberId)
+       OVER (
+       PARTITION BY shopId,`source`,DATE_FORMAT(TIMESTAMPADD(HOUR,8,eo.proctime),'yyyy-MM-dd')
+       ORDER BY eo.proctime
+       RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS payNumber,
+       sum(actualAmount)
+       OVER (
+       PARTITION BY shopId,`source`,DATE_FORMAT(TIMESTAMPADD(HOUR,8,eo.proctime),'yyyy-MM-dd')
+       ORDER BY eo.proctime
+       RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS payAmount,
+       sum(quantity)
+       OVER (
+       PARTITION BY shopId,`source`,DATE_FORMAT(TIMESTAMPADD(HOUR,8,eo.proctime),'yyyy-MM-dd')
+       ORDER BY eo.proctime
+       RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS saleCount
+  FROM emall_order_pay eo
+       INNER JOIN odsOrderItem oi ON eo.id = oi.orderId
+  WHERE status = 1
+
+#计算退款数据
+factShopDailyRefund: |
+  SELECT
+       DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd') as rowDate,
+       shopId,
+       CASE
+          WHEN `source` = 'web'
+          OR `source` = 'wxweb' THEN 'web'
+          ELSE `source`
+       END AS channel,
+       count(DISTINCT orderId)
+       OVER (
+       PARTITION BY shopId,`source`,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+       ORDER BY proctime
+       RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS refundCount,
+       count(DISTINCT member_id)
+       OVER (
+       PARTITION BY shopId,`source`,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+       ORDER BY proctime
+       RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS refundNumber,
+       sum(refundAmount)
+       OVER (
+       PARTITION BY shopId,`source`,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+       ORDER BY proctime
+       RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS refundAmount
+  FROM refund rf
+  JOIN ods_emall_order
+  FOR SYSTEM_TIME AS OF rf.proctime AS eo ON eo.id = rf.orderId
+
+
+
+#计算店铺pv、uv-全渠道
+factShopDailyPvAndUvAllChannel: |
+  SELECT
+       DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd') as rowDate,
+       shopId,
+       mainShopId,
+      'all' as channel,
+       count(*)
+       OVER (
+       PARTITION BY shopId,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+       ORDER BY proctime
+       RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS pv,
+       count(DISTINCT deviceId)
+       OVER (
+       PARTITION BY shopId,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+       ORDER BY proctime
+       RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS uv
+  FROM odsLogStream
+  WHERE eventName ='ViewShop' AND shopId >0
+
+#计算店铺下浏览商品数据-全渠道
+factShopDailyPvAndUvProductAllChannel: |
+  SELECT
+       DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd') as rowDate,
+       shopId,
+      'all' as channel,
+       count(*)
+       OVER (
+       PARTITION BY shopId,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+       ORDER BY proctime
+       RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS pv_product,
+       count(DISTINCT deviceId)
+       OVER (
+       PARTITION BY shopId,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+       ORDER BY proctime
+       RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS uv_product
+  FROM odsLogStream
+  WHERE eventName ='ViewGoods' or eventName = 'ViewGoodsByActivity' AND shopId >0
+
+#计算店铺分享-全渠道
+factShopDailyShareAllChannel: |
+  SELECT
+        DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd') as rowDate,
+        shopId,
+        'all'  AS channel,
+        count(*)
+        OVER (
+        PARTITION BY shopId,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+        ORDER BY proctime
+        RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS shareCount,
+        count(DISTINCT userId)
+        OVER (
+        PARTITION BY shopId,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+        ORDER BY proctime
+        RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS sharenNumber
+  FROM odsLogStream
+  WHERE eventName ='ShareShop' AND shopId >0
+
+#计算店铺加购-全渠道
+factShopDailyAddCartAllChannel: |
+  SELECT
+        DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd') as rowDate,
+        shopId,
+        'all'  AS channel,
+        count(*)
+        OVER (
+        PARTITION BY shopId,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+        ORDER BY proctime
+        RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS addcartCount,
+        count(DISTINCT deviceId)
+        OVER (
+        PARTITION BY shopId,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+        ORDER BY proctime
+        RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS addcartNumber
+  FROM odsLogStream
+  WHERE eventName ='AddToShoppingCart' OR eventName = 'AddToShoppingCartByActivity' AND shopId >0
+
+#计算店铺下单数据-全渠道
+factShopDailyOrderAllChannel: |
+  SELECT
+        DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd') as rowDate,
+        shopId,
+        'all' AS channel,
+        count(DISTINCT orderNo)
+        OVER (
+        PARTITION BY shopId,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+        ORDER BY proctime
+        RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS orderCount,
+        count(DISTINCT memberId)
+        OVER (
+        PARTITION BY shopId,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+        ORDER BY proctime
+        RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS orderNumber,
+        sum(totalAmount)
+        OVER (
+        PARTITION BY shopId,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+        ORDER BY proctime
+        RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS orderAmount
+  FROM emall_order_pay
+  WHERE status= 0
+
+#计算店铺付款数据-全渠道
+factShopDailyPayAllChannel: |
+  SELECT
+       DATE_FORMAT(TIMESTAMPADD(HOUR,8,eo.proctime),'yyyy-MM-dd') as rowDate,
+       shopId,
+       'all' AS channel,
+       count(DISTINCT orderNo)
+       OVER (
+       PARTITION BY shopId,DATE_FORMAT(TIMESTAMPADD(HOUR,8,eo.proctime),'yyyy-MM-dd')
+       ORDER BY eo.proctime
+       RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS payCount,
+       count(DISTINCT memberId)
+       OVER (
+       PARTITION BY shopId,DATE_FORMAT(TIMESTAMPADD(HOUR,8,eo.proctime),'yyyy-MM-dd')
+       ORDER BY eo.proctime
+       RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS payNumber,
+       sum(actualAmount)
+       OVER (
+       PARTITION BY shopId,DATE_FORMAT(TIMESTAMPADD(HOUR,8,eo.proctime),'yyyy-MM-dd')
+       ORDER BY eo.proctime
+       RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS payAmount,
+       sum(quantity)
+       OVER (
+       PARTITION BY shopId,DATE_FORMAT(TIMESTAMPADD(HOUR,8,eo.proctime),'yyyy-MM-dd')
+       ORDER BY eo.proctime
+       RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS saleCount
+  FROM emall_order_pay eo
+       INNER JOIN odsOrderItem oi ON eo.id = oi.orderId
+  WHERE status = 1
+
+#计算退款数据-全渠道
+factShopDailyRefundAllChannel: |
+  SELECT
+       DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd') as rowDate,
+       shopId,
+       'all' as AS channel,
+       count(DISTINCT orderId)
+       OVER (
+       PARTITION BY shopId,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+       ORDER BY proctime
+       RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS refundCount,
+       count(DISTINCT member_id)
+       OVER (
+       PARTITION BY shopId,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+       ORDER BY proctime
+       RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS refundNumber,
+       sum(refundAmount)
+       OVER (
+       PARTITION BY shopId,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+       ORDER BY proctime
+       RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS refundAmount
+  FROM refund rf
+  JOIN ods_emall_order
+  FOR SYSTEM_TIME AS OF rf.proctime AS eo ON eo.id = rf.orderId
+
+
+
+#计算店铺小时级实时数据
+#refund表没有渠道信息，需要关联emall_order去找相关信息，需查询持久化的emall_order
+factShopHourLog: |
+  SELECT DATE_FORMAT(TIMESTAMPADD(HOUR,8,t1.rowTime),'yyyy-MM-dd HH') AS rowTime,
+         t1.channel,
+         t1.shopId,
+         t1.mainShopId,
+         t1.pv,
+         t1.uv,
+         t3.addcartCount,
+         t3.addcartNumber,
+         t2.shareCount,
+         t2.sharenNumber,
+         t4.orderCount,
+         t4.orderNumber,
+         t4.orderAmount,
+         t5.payCount,
+         t5.payNumber,
+         t5.payAmount,
+         t5.saleCount,
+         t6.refundCount,
+         t6.refundNumber,
+         t6.refundAmount
+  FROM
+    (SELECT TUMBLE_END(proctime, INTERVAL '1' HOUR) AS rowTime,
+            shopId,
+            mainShopId,
+            taroEnv AS channel,
+            count(*) AS pv,
+            count(DISTINCT deviceId) AS uv
+     FROM odsLogStream
+     WHERE eventName ='ViewShop'
+       AND shopId >0
+     GROUP BY TUMBLE(proctime, INTERVAL '1' HOUR),
+              shopId,
+              mainShopId,
+              taroEnv)t1
+  LEFT JOIN
+    (SELECT TUMBLE_END(proctime, INTERVAL '1' HOUR) AS rowTime,
+            shopId,
+            taroEnv AS channel,
+            count(*) AS shareCount,
+            count(DISTINCT userId) AS sharenNumber
+     FROM odsLogStream
+     WHERE eventName ='ShareShop'
+       AND shopId >0
+     GROUP BY TUMBLE(proctime, INTERVAL '1' HOUR),
+              shopId,
+              taroEnv)t2 ON t1.shopId = t2.shopId
+  AND t1.channel = t2.channel
+  AND t1.rowTime = t2.rowTime
+  LEFT  JOIN
+    (SELECT TUMBLE_END(proctime, INTERVAL '1' HOUR) AS rowTime,
+            shopId,
+            taroEnv AS channel,
+            count(*) AS addcartCount,
+            count(DISTINCT deviceId) AS addcartNumber
+     FROM odsLogStream
+     WHERE eventName ='AddToShoppingCart'
+       AND shopId >0
+     GROUP BY TUMBLE(proctime, INTERVAL '1' HOUR),
+              shopId,
+              taroEnv)t3 ON t1.shopId = t3.shopId
+  AND t1.channel = t3.channel
+  AND t1.rowTime = t3.rowTime
+  LEFT JOIN
+    (SELECT TUMBLE_END(proctime, INTERVAL '1' HOUR) AS rowTime,
+            shopId,
+            CASE
+                WHEN `source` = 'web'
+                     OR `source` = 'wxweb' THEN 'web'
+                ELSE `source`
+            END AS channel,
+            count(DISTINCT orderNo) AS orderCount,
+            count(DISTINCT memberId) AS orderNumber,
+            sum(totalAmount) AS orderAmount
+     FROM emall_order_pay
+     GROUP BY TUMBLE(proctime, INTERVAL '1' HOUR),
+              shopId,
+              `source`) t4 ON t1.shopId = t4.shopId
+  AND t1.channel = t4.channel
+  AND t1.rowTime = t4.rowTime
+  LEFT JOIN
+    (SELECT TUMBLE_END(eo.proctime, INTERVAL '1' HOUR) AS rowTime,
+            shopId,
+            CASE
+                WHEN `source` = 'web'
+                     OR `source` = 'wxweb' THEN 'web'
+                ELSE `source`
+            END AS channel,
+            count(DISTINCT orderNo) AS payCount,
+            count(DISTINCT memberId) AS payNumber,
+            sum(actualAmount) AS payAmount,
+            sum(quantity) AS saleCount
+     FROM emall_order_pay eo
+     INNER JOIN odsOrderItem oi ON eo.id = oi.orderId
+     WHERE status = 1
+     GROUP BY TUMBLE(eo.proctime, INTERVAL '1' HOUR),
+              shopId,
+              `source`) t5 ON t1.shopId = t5.shopId
+  AND t1.channel = t5.channel
+  AND t1.rowTime = t5.rowTime
+  LEFT JOIN
+    (SELECT TUMBLE_END(rf.proctime, INTERVAL '1' HOUR) AS rowTime,
+             shopId,
+             CASE
+                 WHEN `source` = 'web'
+                      OR `source` = 'wxweb' THEN 'web'
+                 ELSE `source`
+             END AS channel,
+             count(DISTINCT orderId) AS refundCount,
+             count(DISTINCT member_id) AS refundNumber,
+             sum(refundAmount) AS refundAmount
+     FROM refund rf
+     JOIN ods_emall_order
+     FOR SYSTEM_TIME AS OF rf.proctime AS eo ON eo.id = rf.orderId
+     GROUP BY TUMBLE(rf.proctime, INTERVAL '1' HOUR),
+                     shopId,
+                    `source`) t6 ON t1.shopId = t6.shopId
+  AND t1.channel = t6.channel
+  AND t1.rowTime = t6.rowTime
+
+
+##店铺全渠道小时数据
+factShopHourLogAllChannel: |
+  SELECT DATE_FORMAT(TIMESTAMPADD(HOUR,8,t1.rowTime),'yyyy-MM-dd HH') AS rowTime,
+         'all' as channel,
+         t1.shopId,
+         t1.mainShopId,
+         t1.pv,
+         t1.uv,
+         t3.addcartCount,
+         t3.addcartNumber,
+         t2.shareCount,
+         t2.sharenNumber,
+         t4.orderCount,
+         t4.orderNumber,
+         t4.orderAmount,
+         t5.payCount,
+         t5.payNumber,
+         t5.payAmount,
+         t5.saleCount,
+         t6.refundCount,
+         t6.refundNumber,
+         t6.refundAmount
+  FROM
+    (SELECT TUMBLE_END(proctime, INTERVAL '1' HOUR) AS rowTime,
+            shopId,
+            mainShopId,
+            count(*) AS pv,
+            count(DISTINCT deviceId) AS uv
+     FROM odsLogStream
+     WHERE eventName ='ViewShop'
+       AND shopId >0
+     GROUP BY TUMBLE(proctime, INTERVAL '1' HOUR),
+              shopId,mainShopId)t1
+  LEFT JOIN
+    (SELECT TUMBLE_END(proctime, INTERVAL '1' HOUR) AS rowTime,
+            shopId,
+            count(*) AS shareCount,
+            count(DISTINCT userId) AS sharenNumber
+     FROM odsLogStream
+     WHERE eventName ='ShareShop'
+       AND shopId >0
+     GROUP BY TUMBLE(proctime, INTERVAL '1' HOUR),
+              shopId)t2 ON t1.shopId = t2.shopId
+  AND t1.rowTime = t2.rowTime
+  LEFT  JOIN
+    (SELECT TUMBLE_END(proctime, INTERVAL '1' HOUR) AS rowTime,
+            shopId,
+            count(*) AS addcartCount,
+            count(DISTINCT deviceId) AS addcartNumber
+     FROM odsLogStream
+     WHERE eventName ='AddToShoppingCart'
+       AND shopId >0
+     GROUP BY TUMBLE(proctime, INTERVAL '1' HOUR),
+              shopId)t3 ON t1.shopId = t3.shopId
+  AND t1.rowTime = t3.rowTime
+  LEFT JOIN
+    (SELECT TUMBLE_END(proctime, INTERVAL '1' HOUR) AS rowTime,
+            shopId,
+            count(DISTINCT orderNo) AS orderCount,
+            count(DISTINCT memberId) AS orderNumber,
+            sum(totalAmount) AS orderAmount
+     FROM emall_order_pay
+     GROUP BY TUMBLE(proctime, INTERVAL '1' HOUR),
+              shopId,
+              `source`) t4 ON t1.shopId = t4.shopId
+  AND t1.rowTime = t4.rowTime
+  LEFT JOIN
+    (SELECT TUMBLE_END(eo.proctime, INTERVAL '1' HOUR) AS rowTime,
+            shopId,
+            count(DISTINCT orderNo) AS payCount,
+            count(DISTINCT memberId) AS payNumber,
+            sum(actualAmount) AS payAmount,
+            sum(quantity) AS saleCount
+     FROM emall_order_pay eo
+     INNER JOIN odsOrderItem oi ON eo.id = oi.orderId
+     WHERE status = 1
+     GROUP BY TUMBLE(eo.proctime, INTERVAL '1' HOUR),
+              shopId,
+              `source`) t5 ON t1.shopId = t5.shopId
+  AND t1.rowTime = t5.rowTime
+  LEFT JOIN
+    (SELECT TUMBLE_END(rf.proctime, INTERVAL '1' HOUR) AS rowTime,
+             shopId,
+             count(DISTINCT orderId) AS refundCount,
+             count(DISTINCT member_id) AS refundNumber,
+             sum(refundAmount) AS refundAmount
+     FROM refund rf
+     JOIN ods_emall_order
+     FOR SYSTEM_TIME AS OF rf.proctime AS eo ON eo.id = rf.orderId
+     GROUP BY TUMBLE(rf.proctime, INTERVAL '1' HOUR),
+                     shopId) t6 ON t1.shopId = t6.shopId
+  AND t1.rowTime = t6.rowTime

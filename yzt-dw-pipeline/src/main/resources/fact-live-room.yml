@@ -1,0 +1,118 @@
+#订单数据清洗，只取支付订单的第一个状态
+orderClean: |
+  SELECT shopId,
+         memberId,
+         op.orderId,
+         promotionId AS liveRoomId,
+         eo.id,
+         eo.orderNo,
+         `source`,
+         eo.actualAmount,
+         eo.updatedAt,
+         eo.proctime
+  FROM odsEmallOrder eo,
+       odsOrderItem oi,
+       odsOrderPromotion op
+  WHERE eo.id = oi.orderId
+    AND `deleted` = 0
+    AND remindShipCount = 0
+    AND receivedAt IS NULL
+    AND eo.id = op.orderId
+    AND promotionType = 4
+    AND ((oi.productType = 3
+          AND eo.status = 2)
+         OR (oi.productType = 2
+             AND oi.showVoucher = FALSE
+             AND eo.status = 3)
+         OR (oi.productType = 2
+             AND oi.showVoucher = TRUE
+             AND eo.status = 2)
+         OR (oi.productType = 1
+             AND eo.status = 1))
+
+#join 订单表，防止数据延迟导致不一致
+productOrderClean: |
+  SELECT oi.shopId,
+         oi.liveRoomId,
+         oi.productId,
+         oi.productName,
+         oi.quantity,
+         oi.actualAmount,
+         oi.memberName,
+         oi.memberPhone
+  FROM odsLiveRoomOrderItem oi
+  WHERE oi.status = 1 and oi.productType in (1,2,3)
+
+
+newMemberClean: |
+  SELECT eo.shopId AS shopId,
+         eo.liveRoomId AS liveRoomId,
+         eo.memberId AS memberId,
+         ods_eo.created_at AS createdAt
+  FROM emall_order_pay eo
+  left join
+  ods_emall_order
+  FOR SYSTEM_TIME AS OF eo.proctime AS ods_eo ON eo.memberId = ods_eo.member_id
+
+#观看人数和观看次数 --测试用viewshop代替
+factLiveRoomPvAndUv: |
+  SELECT shopId AS shopId,
+         liveRoomId AS liveRoomId,
+         count(*) AS pv,
+         count(DISTINCT openId) AS uv
+  FROM odsLogStream
+  WHERE eventName = 'EnterLiveRoom' and liveRoomId is not null
+  GROUP BY shopId,
+           liveRoomId
+
+#通过分享进入直播间
+factLiveRoomUvByShare: |
+  SELECT shopId AS shopId,
+         liveRoomId AS liveRoomId,
+         count(DISTINCT openId) AS uvByShare
+  FROM odsLogStream
+  WHERE eventName = 'EnterLiveRoom' AND source = 'share' and liveRoomId is not null
+  GROUP BY shopId,
+           liveRoomId
+
+#领取优惠劵数量
+factLiveRoomReceivedCoupon: |
+  SELECT shopId AS shopId,
+         liveRoomId AS liveRoomId,
+         count(*) AS receivedCouponCount
+  FROM odsLogStream
+  WHERE eventName = 'ReceiveCouponByLiveRoom' and liveRoomId is not null
+  GROUP BY shopId,
+           liveRoomId
+
+#直播间订单数据 promotionType = 4 为直播间数据
+factLiveRoomOrder: |
+  SELECT shopId AS shopId,
+         liveRoomId AS liveRoomId,
+         count(orderId) AS orderCount,
+         count(DISTINCT memberId) AS payNumber,
+         sum(actualAmount) AS orderAmount
+  from
+  (select distinct shopId, memberId,liveRoomId,orderId,actualAmount FROM emall_order_pay) eo
+  GROUP BY shopId,
+           liveRoomId
+
+#拓新客计算
+factLiveRoomNewNumber: |
+  SELECT shopId AS shopId,
+         liveRoomId AS liveRoomId,
+         count(DISTINCT memberId) AS newNumber
+  FROM new_member
+  where  createdAt is null
+  group by shopId,liveRoomId
+
+
+#直播商品销量和销售额
+factLiveRoomProductOrder: |
+  SELECT shopId,
+         liveRoomId,
+         sum(actualAmount) AS productAmount,
+         sum(quantity) AS productCount
+  FROM live_room_order_pay
+  GROUP BY shopId,
+           liveRoomId

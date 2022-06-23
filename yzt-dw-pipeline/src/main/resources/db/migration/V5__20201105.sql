@@ -1,0 +1,1 @@
+ALTER TABLE ods_log_stream MODIFY COLUMN device_model VARCHAR(64);

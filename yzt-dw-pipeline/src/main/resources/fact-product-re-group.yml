@@ -1,0 +1,8 @@
+#商品分组规则
+factProductReGroupQuery: |
+  select
+  `id`,
+  `shop_id`,
+  `group_id`,
+  `product_id`
+  from ods_product_re_group

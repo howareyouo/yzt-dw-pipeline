@@ -1,0 +1,68 @@
+#set($ksqldbConfig = $swarm.versionedConfig('ksqldb-config'))
+#set($ksqldbLogConfig = $swarm.versionedConfig('ksqldb-log-config'))
+
+version: '3.7'
+services:
+  yzt-ksqldb:
+    image: ${_dockerimage}
+    deploy:
+      mode: replicated
+      replicas: ${replicas}
+      placement:
+        constraints:
+          - node.labels.app == yzt
+      restart_policy:
+        condition: on-failure
+      update_config:
+        parallelism: 1
+        delay: 1m30s
+        order: stop-first
+        failure_action: rollback
+      resources:
+        limits:
+          cpus: '${limitCpu}'
+          memory: ${limitMemory}
+      labels:
+        #foreach( $label in $swarm.labels().entrySet() )
+        ${label.key}: ${label.value}
+        #end
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    
+    ports: 
+      - "${serverPort}:8088"
+
+    configs:
+      - source: ${ksqldbConfig}
+        target: /etc/ksqldb/ksqldb-server.properties
+        uid: '1001'
+        gid: '1001'
+        mode: 0440
+      - source: ${ksqldbLogConfig}
+        target: /etc/ksqldb/log4j.properties 
+        uid: '1001'
+        gid: '1001'
+        mode: 0440
+    volumes: 
+      - stateVolume:/tmp/kafka-streams
+
+
+configs:
+  ${ksqldbConfig}:
+    file: ../assets/ksqldb-server.properties
+
+  ${ksqldbLogConfig}:
+    file: ../assets/log4j.properties
+
+volumes: 
+  stateVolume:
+    driver: local
+    driver_opts: 
+      type: nfs
+      o: nfsvers=4,addr=${nfsServer},nolock,soft,rw
+      device: ":${nfsServerPath}"
+    

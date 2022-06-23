@@ -1,0 +1,176 @@
+---
+
+# 埋点ODS表加工：
+odsLogStreamQuery: |
+  SELECT
+      r.shopId,
+      r.mainShopId,
+      CASE
+          WHEN r.taroEnv = 'weapp' then 'wxapp'
+          WHEN r.taroEnv = 'h5' then 'web'
+          ELSE NULL
+      END  AS taroEnv,
+      r.deviceId,
+      r.deviceModel,
+      r.deviceBrand,
+      r.systemName,
+      r.systemVersion,
+      r.appVersion,
+      r.eventName,
+      udf_to_timestamp(r.eventTime) as eventTime,
+      r.openId,
+      r.userId,
+      r.url,
+      r.keyword,
+      r.query,
+      r.quantity,
+      r.goodsId,
+      CASE
+          WHEN r.couponTemplateId > 0 THEN 1
+          WHEN r.activityType = 'flashSale' THEN 3
+          WHEN r.activityType = 'fullReduce' THEN 2
+          WHEN r.activityType = 'liveRoom' THEN 4
+          ELSE NULL
+      END AS promotionType,
+      CASE
+          WHEN r.couponTemplateId > 0 THEN r.couponTemplateId
+          ELSE r.activityId
+      END AS promotionId,
+      r.source AS source,
+      r.goodsName AS goodsName,
+      r.liveRoomId AS liveRoomId,
+      r.userName AS userName,
+      t1.phone AS phone,
+      t2.coupon_name AS couponName
+  FROM
+      rawLogStream as r
+  left join dim_member FOR SYSTEM_TIME AS OF r.proctime AS t1 on r.userId = t1.member_id
+  left join ods_coupon_template FOR SYSTEM_TIME AS OF r.proctime AS t2 on r.couponTemplateId = t2.id
+  WHERE r.eventName <> 'ViewShopHeartBeat'
+
+
+# 埋点明细事实表加工
+factLogStreamQuery: |
+  select
+    t2.id as fkMember,
+    t3.id as fkShop,
+    t4.id as fkChannel,
+    CAST(DATE_FORMAT(t1.eventTime, 'yyyyMMdd') AS INT) as fkDate,
+    t5.id as fkProduct,
+    t6.id as fkPromotion,
+    t1.deviceId,
+    t1.openId,
+    t1.deviceModel,
+    t1.deviceBrand,
+    t1.systemName,
+    t1.systemVersion,
+    t1.appVersion,
+    t1.eventName,
+    t1.url,
+    t1.query,
+    t1.keyword,
+    t1.quantity,
+    t1.eventTime
+  from
+    (
+      select
+        s.*,
+        CASE
+          WHEN s.taroEnv = 'wxapp' then 'WX_MP'
+          WHEN s.taroEnv = 'web' then 'H5'
+          WHEN s.taroEnv = 'alipay' then 'ALIPAY_MP'
+          WHEN s.taroEnv = 'tt' then 'TT_MP'
+          ELSE 'UNKNOWN'
+        END AS channel
+      from
+        odsLogStream s
+    ) as t1
+    left join dim_member FOR SYSTEM_TIME AS OF t1.proctime AS t2 on t1.userId = t2.member_id
+    left join dim_shop FOR SYSTEM_TIME AS OF t1.proctime AS t3 on t1.shopId = t3.shop_id
+    left join dim_channel FOR SYSTEM_TIME AS OF t1.proctime AS t4 on t1.channel = t4.channel_code
+    left join dim_product FOR SYSTEM_TIME AS OF t1.proctime AS t5 on t1.goodsId = t5.product_id
+    left join dim_promotion FOR SYSTEM_TIME AS OF t1.proctime AS t6 on t1.promotionId = t6.promotion_id
+    and t1.promotionType = t6.promotion_type_code
+
+
+# 订单事务事实表加工
+orderFactQuery: |
+  select
+      t2.id as fkMember,
+      t3.id as fkShop,
+      t4.id as fkChannel,
+      t5.id as fkPayment,
+      CAST(DATE_FORMAT(t1.updatedAt, 'yyyyMMdd') AS INT) as fkDate,
+      t1.id as orderId,
+      t1.unionNo,
+      t1.orderNo,
+      t1.transactionNo,
+      t1.status,
+      t1.orderType,
+      t1.productAmount,
+      t1.shipCostAmount,
+      t1.shipCostReduced,
+      t1.discountAmount,
+      t1.totalAmount,
+      t1.actualAmount,
+      t1.remark,
+      t1.shipMethod,
+      t1.closedAt,
+      t1.receivedAt,
+      t1.paidAt,
+      t1.cancelReason,
+      t1.deleted,
+      t1.createdAt,
+      t1.updatedAt
+  from
+    (
+        select
+          s.*,
+          CASE
+            WHEN s.source = 'wxapp' then 'WX_MP'
+            WHEN s.source = 'wxweb' then 'H5'
+            WHEN s.source = 'web' then 'H5'
+            WHEN s.source = 'app' then 'APP'
+            WHEN s.source = 'aliapp' then 'ALIPAY_MP'
+            WHEN s.source = 'ttapp' then 'TT_MP'
+            WHEN s.source = 'dyapp' then 'DY_MP'
+            ELSE 'UNKNOWN'
+          END AS channel,
+          CASE
+            WHEN s.paymentMethod = 'wechat_jsapi' then 'wechat_jsapi'
+            WHEN s.paymentMethod = 'alipay' then 'alipay'
+            ELSE 'unknown'
+          END AS paymentChan
+        from
+          odsEmallOrder s
+      ) as t1
+    left join dim_member FOR SYSTEM_TIME AS OF t1.proctime AS t2 on t1.memberId = t2.member_id
+    left join dim_shop FOR SYSTEM_TIME AS OF t1.proctime AS t3 on t1.shopId = t3.shop_id
+    left join dim_channel FOR SYSTEM_TIME AS OF t1.proctime AS t4 on t1.channel = t4.channel_code
+    left join dim_payment_channel FOR SYSTEM_TIME AS OF t1.proctime AS t5 on t1.paymentChan = t5.channel_code
+
+
+
+orderDetailFactQuery: |
+  SELECT
+      t2.fkShop,
+      t2.fkDate,
+      t2.fkMember,
+      t2.fkChannel,
+      t2.fkPayment,
+      t3.id as fkProduct,
+      t4.id as fkSku,
+      t1.orderId,
+      t1.quantity,
+      t1.retailPrice as price,
+      t1.quantity * t1.retailPrice as amount,
+      t1.discountAmount,
+      t1.isGiveaway
+  FROM
+      odsOrderItem t1
+      join factOrder AS t2 ON t1.orderId = t2.orderId
+      left join dim_product FOR SYSTEM_TIME AS OF t1.proctime AS t3 on t1.productId = t3.product_id
+      left join dim_product_sku FOR SYSTEM_TIME AS OF t1.proctime AS t4 on t1.skuId = t4.sku_id
+
+
+orderPromotionQuery: |

@@ -1,0 +1,53 @@
+# SocialAccount维表关联
+factSocialAccountQuery: |
+  SELECT
+      sa.shopMemberId AS id,
+      sa.shopId as shopId,
+      wu.appid as appid,
+      wu.openid as openid,
+      IF(wu.subscribed IS NOT NULL, wu.subscribed, 0) AS subscribed
+  FROM
+      socialAccount AS sa
+  LEFT JOIN ods_wx_user FOR SYSTEM_TIME AS OF sa.proctime AS wu ON sa.appid = wu.appid AND sa.openId = wu.openid
+
+
+# WxUser维表关联
+factWxUserQuery: |
+  SELECT
+      sa.shop_member_id AS id,
+      sa.shop_id as shopId,
+      wu.appid as appid,
+      wu.openid as openid,
+      IF(wu.subscribed IS NOT NULL, wu.subscribed, 0) AS subscribed
+  FROM
+      wxUser AS wu
+   JOIN ods_social_account FOR SYSTEM_TIME AS OF wu.proctime AS sa ON sa.appid = wu.appid AND sa.open_id = wu.openid
+
+
+factWxRelationQuery: |
+  SELECT
+      wr.shopId AS shopId,
+      wu.openid AS openid,
+      wu.appid AS appid,
+      IF(wu.subscribed IS NOT NULL, wu.subscribed, 0) AS subscribed,
+      wr.proctime AS proctime,
+      wr.relation,
+      wr.__deleted,
+      wr.apptype
+  FROM
+      wxRelation AS wr
+  LEFT JOIN ods_wx_user FOR SYSTEM_TIME AS OF wr.proctime AS wu ON wr.appid = wu.appid
+
+factWxRelationResultQuery: |
+  SELECT
+      sa.shop_member_id AS id,
+      sa.shop_id as shopId,
+      wr.openid AS openid,
+      wr.appid AS appid,
+      IF(wr.subscribed IS NOT NULL, wr.subscribed, 0) AS subscribed,
+      wr.__deleted,
+      wr.relation,
+      wr.apptype
+  FROM
+      factWxRelationQuery AS wr
+  LEFT JOIN ods_social_account FOR SYSTEM_TIME AS OF wr.proctime AS sa ON wr.shopId = sa.shop_id and wr.openid = sa.open_id

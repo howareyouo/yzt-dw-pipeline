@@ -1,0 +1,5 @@
+serviceName: yzt-ksqldb
+version: v1.0.0
+appVersion: v1.0.0
+orchestrator: swarm
+orchestratorVersion: v18.9

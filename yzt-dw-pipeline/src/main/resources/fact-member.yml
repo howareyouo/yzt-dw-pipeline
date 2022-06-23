@@ -1,0 +1,396 @@
+#1、product_type为1（实体商品），首次首次付款后status = 1（待发货）
+#2、product_type为2（虚拟商品），当不需要展示电子凭证（show_voucher = false），首次付款后status = 3（订单已完成/待评价），
+#   当需要展示电子凭证（show_voucher = true），首次付款后status = 2 （待收货）
+#3、product_type为3（电子卡券），首次付款后status = 2（待收货）
+factMemberOrderClean: |
+  SELECT DISTINCT eo.id,
+                  eo.shopId,
+                  eo.orderNo,
+                  eo.`source`,
+                  eo.actualAmount,
+                  eo.memberId,
+                  eo.updatedAt,
+                  eo.proctime
+  FROM odsEmallOrder eo,
+       odsOrderItem oi
+  WHERE eo.id = oi.orderId
+    AND `deleted` = 0
+    AND remindShipCount = 0
+    AND receivedAt IS NULL
+    AND ((oi.productType = 3
+            AND eo.status = 2)
+         OR (oi.productType = 2
+            AND oi.showVoucher = FALSE
+            AND eo.status = 3)
+         OR (oi.productType = 2
+            AND oi.showVoucher = TRUE
+            AND eo.status = 2)
+         OR (oi.productType = 1
+             AND eo.status = 1))
+w
+#会员当天累计订单额
+factMemberOrderPayDaily: |
+  SELECT
+        DATE_FORMAT(updatedAt,'yyyy-MM-dd') as rowDate,
+        shopId AS shopId,
+        memberId AS memberId,
+        count(*) AS orderCount,
+        sum(actualAmount) AS totalOrderAmount
+  FROM emall_order_pay
+  WHERE DATE_FORMAT(updatedAt,'yyyy-MM-dd') = cast(CURRENT_DATE as varchar)
+  GROUP BY shopId,memberId,DATE_FORMAT(updatedAt,'yyyy-MM-dd')
+
+
+factMemberOrderPay: |
+  SELECT
+        shopId AS shopId,
+        memberId AS memberId,
+        count(*) AS orderCount,
+        sum(actualAmount) AS totalOrderAmount
+  FROM emall_order_pay
+  GROUP BY shopId,memberId
+
+#会员历史消费记录
+factMemberOderHistory: |
+  SELECT
+          DATE_FORMAT(paid_at,'yyyy-MM-dd') as rowDate,
+          shop_id AS shopId,
+          member_id AS memberId,
+          count(*) AS orderCount,
+          sum(actual_amount) AS totalOrderAmount
+  FROM ods_emall_order
+  WHERE `status` in (1,2,3,4,9)
+  AND paid_at < cast(CURRENT_DATE as varchar)
+  GROUP BY shop_id,member_id,DATE_FORMAT(paid_at,'yyyy-MM-dd')
+
+
+
+#上次消费服务
+factMemberOrderLastServices: |
+  SELECT shopId,
+         memberId,
+         LISTAGG(CONCAT_WS('==',name,cast(quantity AS varchar))) lastConsumeServices
+       FROM odsOrderItem oi
+       INNER JOIN
+         (SELECT id,
+                 shopId,
+                 memberId
+          FROM emall_order_pay
+          WHERE updatedAt =
+              (SELECT max(updatedAt) AS updatedAt
+               FROM emall_order_pay)) eo ON oi.orderId = eo.id
+       GROUP BY shopId,
+                memberId
+
+#上次收货地址
+factMemberOrderLastAddr: |
+  SELECT eo.shopId AS shopId,
+         eo.memberId AS memberId,
+         eo.updatedAt AS lastOrderTime,
+         eo.id AS lastOrderId,
+         CASE
+             WHEN oc.pickupAddressId IS NOT NULL THEN CONCAT_WS('-', pk.province,pk.city,pk.district,pk.address)
+             ELSE CONCAT_WS('-', oc.province,oc.city,oc.district,oc.address)
+         END AS lastConsigneeAddress
+  FROM emall_order_pay eo
+  INNER JOIN odsOrderConsignee oc ON eo.id = oc.orderId
+  LEFT JOIN ods_pickup_address
+  FOR SYSTEM_TIME AS OF oc.proctime AS pk ON oc.pickupAddressId = pk.id
+
+
+#上次收货地址
+factMemberOrderLastAddrV2: |
+  SELECT eo.shopId AS shopId,
+         eo.memberId AS id,
+         CASE
+             WHEN oc.pickupAddressId IS NOT NULL THEN CONCAT_WS('-', pk.province,pk.city,pk.district,pk.address)
+             ELSE CONCAT_WS('-', oc.province,oc.city,oc.district,oc.address)
+         END AS lastConsigneeAddress
+  FROM factOrderItem eo
+  INNER JOIN odsOrderConsignee oc ON eo.orderId = oc.orderId
+  LEFT JOIN ods_pickup_address
+  FOR SYSTEM_TIME AS OF oc.proctime AS pk ON oc.pickupAddressId = pk.id
+
+#累计退款
+factMemberRefund: |
+  SELECT eorf.shopId,
+         eorf.memberId,
+         if(fm.refund_count IS NOT NULL,fm.refund_count,0)+1 AS refundCount,
+         if(fm.refund_amount IS NOT NULL,fm.refund_amount,0)+refundAmount AS refundAmount
+  FROM
+    (SELECT rf.shopId,
+            eo.member_id AS memberId,
+            rf.status AS status,
+            rf.refundAmount,
+            rf.refundedAt,
+            rf.proctime
+     FROM refund rf
+     JOIN ods_emall_order
+  FOR SYSTEM_TIME AS OF rf.proctime AS eo ON eo.id = rf.orderId) eorf
+  JOIN fact_member
+  FOR SYSTEM_TIME AS OF eorf.proctime AS fm ON eorf.shopId = fm.shop_id AND eorf.memberId = fm.member_id
+
+
+#埋点信息
+factMemberLogQuery: |
+  SELECT fm.shop_id as shopId,
+         fm.member_id AS memberId,
+         ls.eventTime AS lastViewShopTime
+  FROM odsLogStream ls
+  WHERE  eventName = 'ViewShop'
+  AND userId > 0
+
+#新客户产生
+factNewMemberQuery: |
+  SELECT sm.shopId AS shopId,
+         sm.id AS memberId,
+         me.balanceAmount,
+         me.giftAmount,
+         me.points,
+         me.debtAmount,
+         me.lastViewShopTime as lastViewShopTime,
+         me.referrer,
+         me.follower,
+         sm.createdAt AS createdAt,
+         me.lastConsumeServices as lastConsumeServices,
+         consumeTimes AS orderCountExport,
+         consumeAmount AS totalOrderAmountExport,
+         me.lastConsigneeAddress as lastConsigneeAddress,
+         me.lastConsumeDate AS lastOrderTime
+  FROM shopMember sm
+  LEFT JOIN memberExtend me ON sm.id = me.shopMemberId
+
+#新老客数据统计
+factNewCustomersQuery: |
+  SELECT
+  t2.id AS order_id,
+  main_shop_id,
+  shop_id,
+  union_no,
+  order_no,
+  transaction_no,
+  payment_method,
+  source,
+  promotion_type,
+  promotion_id,
+  t2.member_id,
+  paid_at,
+  t2.created_at
+  FROM
+  (
+  SELECT
+  eo.*
+  FROM
+  ods_emall_order eo
+  INNER JOIN ( SELECT member_id, min( id ) id FROM ods_emall_order WHERE `status` IN ( 1, 2, 3, 4, 9 ) GROUP BY member_id ) t1 ON eo.member_id = t1.member_id
+  AND eo.id = t1.id
+  ) t2
+  LEFT JOIN ods_order_promotion op ON t2.id = op.order_id
+
+##清洗历史数据（会员）
+factMemberHistory: |
+  INSERT INTO fact_member (
+  	member_id,
+  	shop_id,
+  	balance_amount,
+  	gift_amount,
+  	points,
+  	debt_amount,
+  	referrer,
+  	follower,
+  	created_at,
+  	last_consume_services,
+  	first_order_time,
+  	last_order_time,
+  	order_count,
+  	total_order_amount,
+  	refund_count,
+  	refund_amount,
+  	last_order_id
+  ) SELECT
+  sm.id AS member_id,
+  sm.shop_id,
+  balance_amount,
+  gift_amount,
+  points,
+  debt_amount,
+  referrer,
+  follower,
+  sm.created_at,
+  last_consume_services,
+  first_order_time,
+  ifnull( t3.last_order_time, last_consume_date ) AS last_order_time,
+  (
+  	ifnull( t3.order_count, 0 )+ ifnull( me.consume_times, 0 )) AS order_count,(
+  ifnull( t3.total_order_amount, 0 )+ ifnull( consume_amount, 0 )) AS total_order_amount,
+  t3.refund_count,
+  t3.refund_amount,
+  last_order_id
+  FROM
+  	ods_shop_member sm
+  	LEFT JOIN (
+  	SELECT
+  		t1.shop_id,
+  		t1.member_id,
+  		t1.order_count,
+  		t1.total_order_amount,
+  		t2.refund_count,
+  		t2.refund_amount,
+  		first_order_time,
+  		last_order_time,
+  		last_order_id
+  	FROM
+  		(
+  		SELECT
+  			shop_id,
+  			member_id,
+  			count(*) AS order_count,
+  			sum( actual_amount ) AS total_order_amount,
+  			min( updated_at ) AS first_order_time,
+  			max( updated_at ) AS last_order_time,
+  			max(id) as last_order_id
+  		FROM
+  			ods_emall_order
+  		WHERE
+  			STATUS IN ( 1, 2, 3, 4 )
+  		GROUP BY
+  			shop_id,
+  			member_id
+  		) t1
+  		LEFT JOIN ( SELECT shop_id, member_id, count(*) AS refund_count, sum( actual_amount ) AS refund_amount FROM ods_emall_order WHERE `status` = 9 GROUP BY shop_id, member_id ) t2 ON t1.shop_id = t2.shop_id
+  		AND t1.member_id = t2.member_id
+  	) t3 ON sm.id = t3.member_id
+  	AND sm.shop_id = t3.shop_id
+  	LEFT JOIN ods_member_extend me ON sm.id = me.shop_member_id
+
+test: |
+  SELECT shopId,
+         memberId,
+         if(fm.order_count IS NOT NULL,fm.order_count,0)+1 AS orderCount,
+         if(fm.total_amount IS NOT NULL,fm.total_amount,0)+actualAmount AS totalAmount
+  FROM emall_order_pay
+
+factMemberOrderPayQueryCopy: |
+  SELECT eo.shopId,
+         eo.memberId,
+         fm.balance_amount AS balanceAmount,
+         fm.gift_amount AS giftAmount,
+         fm.points AS points,
+         fm.debt_amount AS debtAmount,
+         fm.last_view_shop_time AS lastViewShopTime,
+         fm.refund_amount AS refundAmount,
+         fm.refund_count AS refundCount,
+         fm.referrer AS referrer,
+         fm.follower AS follower,
+         fm.created_at AS createdAt,
+         lst.lastConsumeServices AS lastConsumeServices,
+         pay.orderCount AS orderCount,
+         fm.order_count_export AS orderCountExport,
+         pay.totalAmount AS totalOrderAmount,
+         fm.total_order_amount_export AS totalOrderAmountExport,
+         CASE
+            WHEN oc.pickupAddressId IS NOT NULL
+            THEN CONCAT_WS('-', pk.province,pk.city,pk.district,pk.address)
+            ELSE CONCAT_WS('-', oc.province,oc.city,oc.district,oc.address)
+         END AS lastConsigneeAddress,
+         if(fm.first_order_time IS NOT NULL,fm.first_order_time,eo.updatedAt) AS firstOrderTime,
+         eo.updatedAt AS lastOrderTime,
+         eo.id  AS lastOrderId,
+         CASE
+             WHEN op.promotionType = 1 THEN (if(fm.coupon_order_count IS NOT NULL,fm.coupon_order_count,0)+1)
+             ELSE fm.coupon_order_count
+         END AS couponOrderCount,
+         CASE
+             WHEN op.promotionType = 1 THEN (if(fm.coupon_order_amount IS NOT NULL,fm.coupon_order_amount,0)+actualAmount)
+             ELSE fm.coupon_order_amount
+         END AS couponOrderAmount,
+         CASE
+             WHEN op.promotionType = 2 THEN (if(fm.full_reduce_order_count IS NOT NULL,fm.full_reduce_order_count,0)+1)
+             ELSE fm.full_reduce_order_count
+         END AS fullReduceOrderCount,
+         CASE
+             WHEN op.promotionType = 2 THEN (if(fm.full_reduce_order_amount IS NOT NULL,fm.full_reduce_order_amount,0)+actualAmount)
+             ELSE fm.full_reduce_order_amount
+         END AS fullReduceOrderAmount,
+         CASE
+             WHEN op.promotionType = 3 THEN (if(fm.flash_sale_order_count IS NOT NULL,fm.flash_sale_order_count,0)+1)
+             ELSE fm.flash_sale_order_count
+         END AS flashSaleOrderCount,
+         CASE
+             WHEN op.promotionType = 3 THEN (if(fm.flash_sale_order_amount IS NOT NULL,fm.flash_sale_order_amount,0)+actualAmount)
+             ELSE fm.flash_sale_order_amount
+         END AS flashSaleOrderAmount,
+         CASE
+             WHEN op.promotionType IS NOT NULL THEN if(fm.promotion_type IS NOT NULL,fm.promotion_type,op.promotionType)
+             ELSE fm.promotion_type
+         END AS promotionType,
+         CASE
+             WHEN op.promotionType IS NOT NULL THEN if(fm.promotion_id IS NOT NULL,fm.promotion_id,op.promotionId)
+             ELSE fm.promotion_id
+         END AS promotionId,
+         CASE
+             WHEN op.promotionType IS NOT NULL THEN if(fm.first_order_promotion_time IS NOT NULL,fm.first_order_promotion_time,eo.updatedAt)
+             ELSE fm.first_order_promotion_time
+         END AS firstOrderPromotionTime
+  FROM
+  (SELECT id,
+          shopId,
+          memberId,
+          status,
+          actualAmount,
+          updatedAt,
+          proctime
+          FROM emall_order_pay
+          WHERE updatedAt =
+              (SELECT max(updatedAt) AS updatedAt
+               FROM emall_order_pay WHERE status = 1)) eo
+  JOIN fact_member
+  FOR SYSTEM_TIME AS OF eo.proctime AS fm ON eo.shopId = fm.shop_id
+  AND eo.memberId = fm.member_id
+  INNER JOIN
+  (SELECT   orderId,
+            province,
+            city,
+            district,
+            address,
+            proctime,
+            pickupAddressId
+            FROM odsOrderConsignee
+            WHERE updatedAt =
+                (SELECT max(updatedAt) AS updatedAt
+                 FROM odsOrderConsignee)) oc ON oc.orderId = eo.id
+  LEFT JOIN ods_pickup_address
+  FOR SYSTEM_TIME AS OF oc.proctime AS pk ON oc.pickupAddressId = pk.id
+  LEFT JOIN odsOrderPromotion op ON op.orderId = eo.id
+  INNER JOIN
+    (SELECT shopId,
+            memberId,
+            LISTAGG(CONCAT_WS('==',name,cast(quantity AS varchar))) lastConsumeServices
+     FROM odsOrderItem oi
+     INNER JOIN
+       (SELECT id,
+               shopId,
+               memberId
+        FROM emall_order_pay
+        WHERE updatedAt =
+            (SELECT max(updatedAt) AS updatedAt
+             FROM emall_order_pay WHERE status = 1)) eo ON oi.orderId = eo.id
+     GROUP BY shopId,
+              memberId) lst ON eo.shopId = lst.shopId  AND eo.memberId = lst.memberId
+  INNER JOIN
+  ( select shopId,memberId,count(*) as orderCount,sum(actualAmount) as totalAmount
+    from
+    emall_order_pay
+    where `status` = 1
+    group by shopId,memberId ) pay
+  on eo.shopId = pay.shopId  and eo.memberId = pay.memberId
+   WHERE eo.status = 1
+
+  SELECT
+        DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd HH:mm') as rowDate,
+        shopId AS shopId,
+        memberId AS memberId,
+        count(*) AS orderCount,
+        sum(actualAmount) AS totalOrderAmount
+  FROM emall_order_pay
+  GROUP BY shopId,memberId,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd HH:mm')

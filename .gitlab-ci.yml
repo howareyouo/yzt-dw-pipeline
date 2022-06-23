@@ -1,0 +1,29 @@
+image: ${CI_IMAGE}
+
+before_script:
+  - cp -r /root/citools .
+  - export GRADLE_USER_HOME=`pwd`/.gradle
+  - export GRADLE_OPTS="-Dorg.gradle.daemon=false"
+
+cache:
+  paths:
+    - .gradle/caches
+    - .gradle/wrapper
+
+stages:
+  - build
+
+build:
+  stage: build
+  tags:
+    - java
+  script:
+    - cd ./yzt-dw-pipeline && ./gradlew build -i
+
+  artifacts:
+    paths:
+      - ./yzt-dw-pipeline/build/
+    expire_in: 60 mins
+    when: on_success
+
+

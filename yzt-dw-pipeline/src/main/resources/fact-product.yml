@@ -1,0 +1,306 @@
+#商品当天实时数据
+factProductDaily: |
+  SELECT t1.rowDate,
+         t1.shopId,
+         t1.productId,
+         t1.channel,
+         t1.pv,
+         t1.uv,
+         t2.shareCount,
+         t2.shareNumber,
+         t3.addCartCount,
+         t3.addCartNumber,
+         t4.orderCount,
+         t4.orderNumber,
+         t5.payCount,
+         t5.payNumber,
+         t5.saleTotal,
+         t5.saleCount,
+         t6.inventory
+  FROM
+    (SELECT
+            DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd') as rowDate,
+            shopId,
+            goodsId AS productId,
+            taroEnv AS channel,
+            count(deviceId)
+            OVER (
+                 PARTITION BY shopId,goodsId,taroEnv,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+                 ORDER BY proctime
+                 RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS pv,
+            count(DISTINCT deviceId)
+            OVER (
+                 PARTITION BY shopId,goodsId,taroEnv,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+                 ORDER BY proctime
+                 RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS uv
+     FROM odsLogStream
+     WHERE eventName ='ViewGoods' or eventName = 'ViewGoodsByActivity' AND shopId >0 ) t1
+  LEFT JOIN
+    (SELECT
+            DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd') as rowDate,
+            shopId,
+            goodsId AS goodsId,
+            taroEnv AS channel,
+            count(deviceId)
+            OVER (
+                 PARTITION BY shopId,goodsId,taroEnv,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+                 ORDER BY proctime
+                 RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS shareCount,
+            count(DISTINCT deviceId)
+            OVER (
+                 PARTITION BY shopId,goodsId,taroEnv,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+                 ORDER BY proctime
+                 RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS shareNumber
+     FROM odsLogStream
+     WHERE eventName = 'ShareGoods' or eventName = 'ShareGoodsByActivity' AND shopId >0) t2
+  ON t1.shopId = t2.shopId
+  AND t1.productId = t1.productId
+  AND t1.channel = t2.channel
+  AND t1.rowDate = t2.rowDate
+  LEFT JOIN
+    (SELECT
+            DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd') as rowDate,
+            shopId,
+            goodsId AS productId,
+            taroEnv AS channel,
+            count(deviceId)
+            OVER (
+                 PARTITION BY shopId,goodsId,taroEnv,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+                 ORDER BY proctime
+                 RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS addCartCount,
+            count(DISTINCT deviceId)
+            OVER (
+                 PARTITION BY shopId,goodsId,taroEnv,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+                 ORDER BY proctime
+                 RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS addCartNumber
+     FROM odsLogStream
+     WHERE eventName = 'AddToShoppingCart' or eventName = 'AddToShoppingCartByActivity' AND shopId >0) t3
+  ON t1.shopId = t3.shopId
+  AND t1.productId = t3.productId
+  AND t1.channel = t3.channel
+  AND t1.rowDate = t3.rowDate
+  LEFT JOIN (
+               (SELECT
+                DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd') as rowDate,
+                shopId,
+                CASE WHEN `source` = 'web'
+                OR `source` = 'wxweb'
+                THEN 'web' ELSE `source` END AS channel,
+                productId,
+                count(DISTINCT orderNo)
+                OVER (
+                     PARTITION BY shopId,productId,`source`,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+                     ORDER BY eo.proctime
+                     RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS orderCount,
+                count(DISTINCT memberId)
+                OVER (
+                      PARTITION BY shopId,productId,`source`,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+                      ORDER BY eo.proctime
+                      RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS orderNumber
+                FROM emall_order_pay eo
+                INNER JOIN odsOrderItem oi ON eo.id = oi.orderId
+                WHERE status = 0 )) t4
+  ON t1.shopId = t4.shopId
+  AND t1.productId = t4.productId
+  AND t1.channel = t4.channel
+  AND t1.rowDate = t4.rowDate
+  LEFT JOIN (
+               (SELECT
+                DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd') as rowDate,
+                shopId,
+                CASE WHEN `source` = 'web'
+                OR `source` = 'wxweb'
+                THEN 'web' ELSE `source` END AS channel,
+                productId,
+                count(DISTINCT orderNo)
+                OVER (
+                     PARTITION BY shopId,productId,`source`,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+                     ORDER BY eo.proctime
+                     RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS payCount,
+                count(DISTINCT memberId)
+                OVER (
+                     PARTITION BY shopId,productId,`source`,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+                     ORDER BY eo.proctime
+                     RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS payNumber,
+                sum(actualAmount)
+                OVER (
+                     PARTITION BY shopId,productId,`source`,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+                     ORDER BY eo.proctime
+                     RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS saleTotal,
+                sum(quantity)
+                OVER (
+                     PARTITION BY shopId,productId,`source`,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+                     ORDER BY eo.proctime
+                     RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS saleCount
+                FROM emall_order_pay eo
+                INNER JOIN odsOrderItem oi ON eo.id = oi.orderId
+                WHERE status = 1 )) t5
+  ON t1.shopId = t5.shopId
+  AND t1.productId = t5.productId
+  AND t1.channel = t5.channel
+  AND t1.rowDate = t5.rowDate
+  LEFT JOIN
+    (SELECT productId,
+            inventory
+     FROM productSku) t6
+  ON t5.productId = t6.productId
+
+
+
+#商品全渠道当天实时数据
+factProductDailyAllChannel: |
+  SELECT t1.rowDate,
+         t1.shopId,
+         t1.productId,
+         'all' as channel,
+         t1.pv,
+         t1.uv,
+         t2.shareCount,
+         t2.shareNumber,
+         t3.addCartCount,
+         t3.addCartNumber,
+         t4.orderCount,
+         t4.orderNumber,
+         t5.payCount,
+         t5.payNumber,
+         t5.saleTotal,
+         t5.saleCount,
+         t6.inventory
+  FROM
+    (SELECT shopId,
+            DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd') as rowDate,
+            goodsId AS productId,
+            count(deviceId)
+            OVER (
+                 PARTITION BY shopId,goodsId,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+                 ORDER BY proctime
+                 RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS pv,
+            count(DISTINCT deviceId)
+            OVER (
+                 PARTITION BY shopId,goodsId,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+                 ORDER BY proctime
+                 RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS uv
+     FROM odsLogStream
+     WHERE eventName ='ViewGoods' or eventName = 'ViewGoodsByActivity' AND shopId >0 ) t1
+  LEFT JOIN
+    (SELECT
+            DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd') as rowDate,
+            shopId,
+            goodsId AS productId,
+            count(deviceId)
+            OVER (
+                 PARTITION BY shopId,goodsId,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+                 ORDER BY proctime
+                 RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS shareCount,
+            count(DISTINCT deviceId)
+            OVER (
+                 PARTITION BY shopId,goodsId,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+                 ORDER BY proctime
+                 RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS shareNumber
+     FROM odsLogStream
+     WHERE eventName = 'ShareGoods' or eventName = 'ShareGoodsByActivity' AND shopId >0) t2
+  ON t1.shopId = t2.shopId
+  AND t1.productId = t2.productId
+  AND t1.rowDate = t2.rowDate
+  LEFT JOIN
+    (SELECT
+            DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd') as rowDate,
+            shopId,
+            goodsId AS productId,
+            count(deviceId)
+            OVER (
+                 PARTITION BY shopId,goodsId,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+                 ORDER BY proctime
+                 RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS addCartCount,
+            count(DISTINCT deviceId)
+            OVER (
+                 PARTITION BY shopId,goodsId,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+                 ORDER BY proctime
+                 RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS addCartNumber
+     FROM odsLogStream
+     WHERE eventName = 'AddToShoppingCart' or eventName = 'AddToShoppingCartByActivity' AND shopId >0) t3
+  ON t1.shopId = t3.shopId
+  AND t1.productId = t3.productId
+  AND t1.rowDate = t3.rowDate
+  LEFT JOIN (
+               (SELECT
+                DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd') as rowDate,
+                shopId,
+                productId,
+                count(DISTINCT orderNo)
+                OVER (
+                     PARTITION BY shopId,productId,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+                     ORDER BY eo.proctime
+                     RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS orderCount,
+                count(DISTINCT memberId)
+                OVER (
+                      PARTITION BY shopId,productId,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+                      ORDER BY eo.proctime
+                      RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS orderNumber
+                FROM emall_order_pay eo
+                INNER JOIN odsOrderItem oi ON eo.id = oi.orderId
+                WHERE status = 0 )) t4
+  ON t1.shopId = t4.shopId
+  AND t1.productId = t4.productId
+  AND t1.rowDate = t4.rowDate
+  LEFT JOIN (
+               (SELECT
+                DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd') as rowDate,
+                shopId,
+                productId,
+                count(DISTINCT orderNo)
+                OVER (
+                     PARTITION BY shopId,productId,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+                     ORDER BY eo.proctime
+                     RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS payCount,
+                count(DISTINCT memberId)
+                OVER (
+                     PARTITION BY shopId,productId,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+                     ORDER BY eo.proctime
+                     RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS payNumber,
+                sum(actualAmount)
+                OVER (
+                     PARTITION BY shopId,productId,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+                     ORDER BY eo.proctime
+                     RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS saleTotal,
+                sum(quantity)
+                OVER (
+                     PARTITION BY shopId,productId,DATE_FORMAT(TIMESTAMPADD(HOUR,8,proctime),'yyyy-MM-dd')
+                     ORDER BY eo.proctime
+                     RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) AS saleCount
+                FROM emall_order_pay eo
+                INNER JOIN odsOrderItem oi ON eo.id = oi.orderId
+                WHERE status = 1 )) t5
+  ON t1.shopId = t5.shopId
+  AND t1.productId = t5.productId
+  AND t1.rowDate = t5.rowDate
+  LEFT JOIN
+    (SELECT productId,
+            inventory
+     FROM productSku) t6
+  ON t5.productId = t6.productId
+
+
+#测试
+test: |
+  SELECT
+      shopId,
+      `source`,
+      updatedAt,
+      count(distinct orderNo)
+      OVER (
+           PARTITION BY shopId,`source`
+           ORDER BY proctime
+           RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) as orderCount,
+      count(distinct memberId)
+      OVER (
+            PARTITION BY shopId,`source`
+            ORDER BY proctime
+            RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) as orderNumber,
+      sum(actualAmount)
+      OVER (
+            PARTITION BY shopId,`source`
+            ORDER BY proctime
+            RANGE BETWEEN INTERVAL '1' DAY preceding AND CURRENT ROW) as orderAmount
+    FROM emall_order_pay
+    LEFT JOIN

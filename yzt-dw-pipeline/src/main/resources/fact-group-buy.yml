@@ -1,0 +1,31 @@
+groupBugDimQuery: |
+  SELECT eo.id as orderId,
+         mainShopId,
+         shopId,
+         unionNo,
+         orderNo,
+         transactionNo,
+         paymentMethod,
+         source,
+         status,
+         orderType,
+         productAmount,
+         shipCostAmount,
+         shipCostReduced,
+         discountAmount,
+         totalAmount,
+         actualAmount,
+         memberId,
+         shipMethod,
+         closedAt,
+         receivedAt,
+         paidAt,
+         createdAt,
+         updatedAt,
+         op.promotion_type AS promotionType,
+         op.promotion_id AS promotionId,
+         op.discount_amount AS promotionDiscountAmount
+  FROM odsEmallOrder AS eo
+  INNER JOIN ods_order_promotion
+  FOR SYSTEM_TIME AS OF eo.proctime AS op ON eo.id = op.order_id
+  WHERE op.promotion_type = 9

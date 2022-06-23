@@ -1,0 +1,21 @@
+replicas: 2
+limitCpu: '2.0'
+limitMemory: 1500M
+
+loggerLevel: INFO
+# headless | interactive
+ksqlHeadlessMode: false
+
+bootstrapServers: localhost:9092
+schemaRegistryServer: kafka-schema-registry:8081
+
+serverPort: 8088
+ksqlServiceId: yzt-ksql-cluster_
+ksqlThreadSize: 30
+# 自动创建的topic的前缀
+ksqlOutputTopicPrefix: default_
+# interactive模式下的persistent query数量
+interactiveQueryLimit: 50
+
+nfsServer: 192.168.100.1
+nfsServerPath: /ssd/nfsdata

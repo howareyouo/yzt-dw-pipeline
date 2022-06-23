@@ -1,0 +1,106 @@
+[
+  {
+    "category": 1,
+    "name": "新增客户",
+    "description": "近15天新注册的客户",
+    "filters": [
+      {
+        "condition": "CREATED_AT",
+        "relativeTimeRange": "15d"
+      }
+    ]
+  },
+  {
+    "category": 1,
+    "name": "咨询客户",
+    "description": "近7天咨询过客服的客户",
+    "filters": [],
+    "hidden": true
+  },
+  {
+    "category": 1,
+    "name": "互动客户",
+    "description": "近15天其他营销活动参与过的客户",
+    "filters": [],
+    "hidden": true
+  },
+  {
+    "category": 1,
+    "name": "加购物车客户",
+    "description": "近7天有加购物车行为的客户",
+    "filters": [
+      {
+        "condition": "CART_PRODUCTS",
+        "relativeTimeRange": "7d",
+        "value": "any"
+      }
+    ]
+  },
+  {
+    "category": 1,
+    "name": "下单未付款",
+    "description": "近7天下单却未完成付款的客户",
+    "filters": [
+      {
+        "condition": "UNPAID_PRODUCTS",
+        "relativeTimeRange": "7d",
+        "value": "any"
+      }
+    ]
+  },
+  {
+    "category": 2,
+    "name": "价值客户",
+    "description": "总消费额前20%的客户",
+    "filters": [
+      {
+        "condition": "TIMELESS_TOTAL_AMOUNT",
+        "valueRange": ["0%", "20%"]
+      }
+    ]
+  },
+  {
+    "category": 2,
+    "name": "活跃客户",
+    "description": "消费频率前20%的客户",
+    "filters": [
+      {
+        "condition": "PURCHASE_RATE",
+        "valueRange": ["0%", "20%"]
+      }
+    ]
+  },
+  {
+    "category": 2,
+    "name": "潜力客户",
+    "description": "消费频率前30%消费额非前20%的客户",
+    "filters": [
+      {
+        "condition": "PURCHASE_RATE",
+        "valueRange": ["21%", "30%"]
+      }
+    ]
+  },
+  {
+    "category": 2,
+    "name": "可挽回客户",
+    "description": "最近一次交易时间大于60天，小于90天的客户",
+    "filters": [
+      {
+        "condition": "LATEST_PURCHASE",
+        "valueRange": ["60", "90"]
+      }
+    ]
+  },
+  {
+    "category": 2,
+    "name": "兴趣人群",
+    "description": "商城单次平均浏览时长前20%的客户",
+    "filters": [
+      {
+        "condition": "VISIT_DURATION",
+        "valueRange": ["0%", "20%"]
+      }
+    ]
+  }
+]

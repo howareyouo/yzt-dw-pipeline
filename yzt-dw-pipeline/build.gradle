@@ -1,0 +1,103 @@
+plugins {
+    id 'application'
+    id 'java'
+    id 'idea'
+    id "io.freefair.lombok" version "6.4.3"
+    id 'com.github.johnrengelman.shadow' version '7.1.2'
+}
+
+group 'cn.yizhi.yzt'
+version '1.4.9'
+sourceCompatibility = 11
+
+mainClassName = 'cn.yizhi.yzt.pipeline.Application'
+
+ext {
+    javaVersion = '11'
+    flinkVersion = '1.15.0'
+    scalaBinaryVersion = '_2.12'
+    slf4jVersion = '1.7.32'
+    log4jVersion = '2.17.1'
+}
+
+configurations {
+    flinkShadowJar // dependencies which go into the shadowJar
+
+    // 总是排除这些依赖（也来自传递依赖），因为 Flink 会提供这些依赖。
+    flinkShadowJar.exclude group: 'org.apache.flink', module: 'force-shading'
+    flinkShadowJar.exclude group: 'com.google.code.findbugs', module: 'jsr305'
+    flinkShadowJar.exclude group: 'org.slf4j'
+    flinkShadowJar.exclude group: 'log4j'
+}
+
+
+sourceCompatibility = javaVersion
+targetCompatibility = javaVersion
+tasks.withType(JavaCompile) {
+    options.encoding = 'UTF-8'
+}
+
+applicationDefaultJvmArgs = ["-Dlog4j.configuration=log4j.properties"]
+
+dependencies {
+    // --------------------------------------------------------------
+    // 编译时依赖不应该包含在 shadow jar 中
+    // 这些依赖会在 Flink 的 lib 目录中提供。
+    // --------------------------------------------------------------
+    implementation "org.apache.flink:flink-streaming-java:${flinkVersion}"
+    implementation "org.apache.flink:flink-table-api-java-bridge:${flinkVersion}"
+    implementation "org.apache.flink:flink-statebackend-rocksdb:${flinkVersion}"
+    implementation "org.apache.flink:flink-clients:${flinkVersion}"
+    implementation "org.apache.flink:flink-runtime:${flinkVersion}"
+
+    // --------------------------------------------------------------
+    // 应该包含在 shadow jar 中的依赖，例如：连接器。
+    // 它们必须在 flinkShadowJar 的配置中！
+    // --------------------------------------------------------------
+    flinkShadowJar "org.apache.flink:flink-connector-kafka:${flinkVersion}"
+    flinkShadowJar "org.apache.flink:flink-connector-jdbc:${flinkVersion}"
+    flinkShadowJar "org.apache.flink:flink-json:${flinkVersion}"
+    //flinkShadowJar "org.apache.flink:flink-avro:${flinkVersion}"
+    flinkShadowJar 'mysql:mysql-connector-java:8.0.29'
+    flinkShadowJar "org.json:json:20220320"
+    flinkShadowJar "commons-dbutils:commons-dbutils:1.7"
+    flinkShadowJar 'io.github.classgraph:classgraph:4.8.146'
+    flinkShadowJar 'com.github.ben-manes.caffeine:caffeine:3.1.0'
+    flinkShadowJar 'org.flywaydb:flyway-core:8.5.10'
+    flinkShadowJar 'org.flywaydb:flyway-mysql:8.5.10'
+
+
+    runtimeOnly "org.apache.logging.log4j:log4j-slf4j-impl:${log4jVersion}"
+    runtimeOnly "org.apache.logging.log4j:log4j-api:${log4jVersion}"
+    runtimeOnly "org.apache.logging.log4j:log4j-core:${log4jVersion}"
+
+    // Add test dependencies here.
+    // testCompile "junit:junit:4.12"
+}
+
+// make compileOnly dependencies available for tests:
+sourceSets {
+    main.compileClasspath += configurations.flinkShadowJar
+    main.runtimeClasspath += configurations.flinkShadowJar
+    test.compileClasspath += configurations.flinkShadowJar
+    test.runtimeClasspath += configurations.flinkShadowJar
+    javadoc.classpath += configurations.flinkShadowJar
+}
+
+run.classpath = sourceSets.main.runtimeClasspath
+
+jar {
+    manifest {
+        attributes 'Built-By': System.getProperty('user.name'),
+                'Build-Jdk': System.getProperty('java.version')
+    }
+}
+
+shadowJar {
+    configurations = [project.configurations.flinkShadowJar]
+    mergeServiceFiles()
+}
+
+repositories {
+    mavenCentral()
+}
